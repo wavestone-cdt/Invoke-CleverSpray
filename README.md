@@ -3,9 +3,9 @@
 
 **Options:**
 > -Password: Password to spray.  
-> -PasswordFile: Path to file containing a list of passwords to spray.
-> -Username: samAccountName of the user to target.
-> -UsernamesFile: Path to file containing a list of samAccountNames to target.
+> -PasswordFile: Path to file containing a list of passwords to spray.  
+> -Username: samAccountName of the user to target.  
+> -UsernamesFile: Path to file containing a list of samAccountNames to target.  
 > -Domain: The domain to query for users, defaults to the current domain.  
 > -Limit: Integer to substract to "badPwdCount" to avoid blocking accounts (must be at least 2 ; default is 2).  
 > -Delay: Delay between authentication attemps (in ms).  
@@ -36,7 +36,7 @@ Invoke-CleverSpray -PasswordFile ".\pwd_list.txt"
             - if user's "badPwdCount" attribute was incremented, no previous or current password was found for that specific user
     - If a delay is set (-Delay), wait for Delay +/- Jitter (-Jitter) or directly spray on to the next user of the domain.
 
-WARNING: Default -Limit is set to 1 (i.e. only user accounts having a "badPwdCount" lower or equal to 1 will be targeted). You can increase this value at your own risk to target more users. I cannot garantee no users will be locked.
+ **WARNING: Default -Limit is set to 1 (i.e. only user accounts having a "badPwdCount" lower or equal to 1 will be targeted). You can increase this value at your own risk to target more users. I cannot garantee no users will be locked.**
 
 **Greetings: **
 Thanks @harmj0y for PowerView !
