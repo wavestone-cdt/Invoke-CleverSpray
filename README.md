@@ -7,8 +7,9 @@
 > -Username: samAccountName of the user to target.  
 > -UsernamesFile: Path to file containing a list of samAccountNames to target.  
 > -Domain: The domain to query for users, defaults to the current domain.  
-> -Limit: Integer to substract to "badPwdCount" to avoid blocking accounts (must be at least 2 ; default is 2).  
-> -Delay: Delay between authentication attemps (in ms).  
+> -Limit: Only users having a 'badPwdCount' lower or equal to Limit will be targeted (default is 1 to avoid blocking accounts).  
+> -Delay: Delay between authentication attemps (in s).  
+> -Jitter: Jitter for the authentication attemps delay.   
 > -HideOld: Hide old password discovered (default is false).
 
 **Usage:**
