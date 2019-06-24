@@ -1,6 +1,6 @@
 <#
     Function: Invoke-CleverSpray
-    Author : Francois Lelievre (@dafanch)
+    Author : Francois Lelievre (@flelievre)
     Taking profit of: Convert-LDAPProperty, Get-NetDomain and Get-NetUser from PowerView - by Will Schroeder (@harmj0y)
     License: BSD 3-Clause
     Required Dependencies: None
