@@ -1,5 +1,5 @@
 # Invoke-CleverSpray
-**Password Spraying Script detecting current and previous passwords of Active Directory User**
+**Password Spraying Script detecting current and previous passwords of Active Directory User** by @flelievre
 
 **Options:**
 > -Password: Password to spray.  
