@@ -216,7 +216,7 @@ function Invoke-CleverSpray {
                         $TotalNbOldPwdDiscovered++
                     }
                 }
-                if (-Not ($UserCount -eq ($NbUsers - 1))) {
+                if (-Not ($UserCounter -eq ($NbUsers - 1))) {
                     $RandNo = New-Object System.Random
                     $WaitingTime = $RandNo.Next((1-$Jitter)*$Delay, (1+$Jitter)*$Delay)
                     # sleep for our semi-randomized interval
